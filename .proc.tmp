@@ -1,0 +1,2 @@
+USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+tzini    1635315 58.0  1.4 2227228 868636 pts/94 Sl+  17:50   1:05 ./bin/moduleCharacterization_step1.exe cfg/moduleCharacterization_tzini.cf
