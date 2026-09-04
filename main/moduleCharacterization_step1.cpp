@@ -267,6 +267,13 @@ int main(int argc, char** argv)
   std::map<int,TCanvas*> c;
   std::map<int,std::vector<float>*> rangesLR;
   std::map<int,bool> acceptEvent;
+  
+  // crosstalk study variables
+  std::map<int,long long> nEvents_perBar;   // denominator: good events with maxBar = this bar
+  std::map<int,long long> nXT1_perBar;      // at least one active neighbor within distance 1
+  std::map<int,long long> nXT2_perBar;      // at least one neighbor at distance 2 active (control)
+  long long nEvents_tot = 0, nXT1_tot = 0, nXT2_tot = 0;
+  TH1F* h1_XTratio = new TH1F("h1_crosstalkEnergyRatio",";E_{vicino} / E_{maxBar};eventi",240,0.,1.2);
 
   // - Coincidence pre loop
   if( !opts.GetOpt<std::string>("Coincidence.status").compare("yes") &&
@@ -547,35 +554,68 @@ int main(int argc, char** argv)
     float energySumArray = 0;
     int nActiveBarsArray = 0;
     int nBarsVeto[16];
+    int nBarsVeto1[16];
+    int nBarsVeto2[16];  
 
     // -- determine DUT active bars
     for(unsigned int iBar = 0; iBar < channelMapping.size()/2; ++iBar) {
       nBarsVeto[iBar] = 0;
+      nBarsVeto1[iBar] = 0;
+      nBarsVeto2[iBar] = 0;
       if (totL[iBar]>-10 && totR[iBar]>-10 && totL[iBar]<100 && totR[iBar]<100) {
-	float energyMean=(energyL[iBar]+energyR[iBar])/2;
-	if (energyL[iBar]>0 && energyR[iBar]>0 && energyMean > 0){
-	  energySumArray+=energyMean;
-	  nActiveBarsArray+=1;
-	}	    
+	      float energyMean=(energyL[iBar]+energyR[iBar])/2;
+	      if (energyL[iBar]>0 && energyR[iBar]>0 && energyMean > 0){
+	        energySumArray+=energyMean;
+	        nActiveBarsArray+=1;
+        }	    
 
-	// --- check energy in adjacent bars -----> this is currently unused but might be useful for specific studies
-	for (int jBar = int(iBar) - 2; jBar < int(iBar) + 3; ++jBar){
-	  if (jBar == int(iBar)) continue;
-	  if (jBar < 0 || jBar > 15 ) continue;
-	  if (totL[jBar]<-10 || totL[jBar]>100) continue;
-	  if (totR[jBar]<-10 || totR[jBar]>100) continue;
-	  float en = (energyL[jBar]+energyR[jBar])/2;
-	  if ( en > minE[std::make_pair(jBar, Vov)] && minE[std::make_pair(jBar, Vov)]>1 && en<1024 ){
-	    nBarsVeto[iBar]+=1;
-	  }
-	}
-	// --- find bar having maximum average energy LR
-	if(energyMean>maxEn){
-	  maxEn = energyMean;
-	  maxBar = iBar;
-	}
+	      // --- check energy in adjacent bars
+	      for (int jBar = int(iBar) - 2; jBar < int(iBar) + 3; ++jBar){
+	       if (jBar == int(iBar)) continue;
+         if (jBar < 0 || jBar > 15 ) continue;
+         if (totL[jBar]<-10 || totL[jBar]>100) continue;
+         if (totR[jBar]<-10 || totR[jBar]>100) continue;
+         float en = (energyL[jBar]+energyR[jBar])/2;
+         if ( en > minE[std::make_pair(jBar, Vov)] && minE[std::make_pair(jBar, Vov)]>1 && en<1024 ){
+           nBarsVeto[iBar]+=1;
+           int dist = jBar - int(iBar);
+           if( dist == 1 || dist == -1 ) 
+           nBarsVeto1[iBar]+=1;
+           else
+           nBarsVeto2[iBar]+=1;
+         }
+        }
+        // --- find bar having maximum average energy LR
+        if(energyMean>maxEn){
+	        maxEn = energyMean;
+	        maxBar = iBar;
+        }
       }
     } // end loop over bars
+  
+    // CROSSTALK STUDY: counting for the current event ................................................................................................
+    float maxEnF   = (energyL[maxBar]+energyR[maxBar])/2.;   // float value of maxEn
+    float minE_max = minE[std::make_pair(maxBar, Vov)];
+    if( nActiveBarsArray > 0 && minE_max > 1 && maxEnF > minE_max && maxEnF < 1024 )
+    {
+      nEvents_perBar[maxBar]++;
+      nEvents_tot++;
+
+      if( nBarsVeto1[maxBar] > 0 ){ nXT1_perBar[maxBar]++; nXT1_tot++; }
+      if( nBarsVeto2[maxBar] > 0 ){ nXT2_perBar[maxBar]++; nXT2_tot++; }
+
+      // --- quanto vale il crosstalk: rapporto di energia con i primi vicini
+      for(int d = -1; d <= 1; d += 2){
+	      int j = maxBar + d;
+        if( j < 0 || j > 15 ) continue;
+        if( totL[j]<-10 || totL[j]>100 ) continue;
+	      if( totR[j]<-10 || totR[j]>100 ) continue;
+	      float en = (energyL[j]+energyR[j])/2.;
+	      if( en > minE[std::make_pair(j, Vov)] && minE[std::make_pair(j, Vov)]>1 && en<1024 && !(vetoOtherBars && nActiveBarsArray > maxActiveBars))
+	      h1_XTratio -> Fill( en/maxEnF );
+      }
+    }
+    //fine programma....................................................................................................................................................
 
     // -- fill histograms and branch info
     for(unsigned int iBar = 0; iBar < channelMapping.size()/2; ++iBar){
@@ -707,6 +747,29 @@ int main(int argc, char** argv)
       std::cout << f << std::endl;
     }
   }
+  
+    // Crosstalk summary..................................................................................
+  std::cout << "\n=== CROSSTALK SUMMARY ===" << std::endl;
+  TH1F* h1_XTfrac1 = new TH1F("h1_crosstalkFraction_dist1",";bar ID;fraction [%]",16,-0.5,15.5);
+  TH1F* h1_XTfrac2 = new TH1F("h1_crosstalkFraction_dist2",";bar ID;fraction [%]",16,-0.5,15.5);
+  for(int barID = 0; barID < 16; ++barID){
+    long long nTot = nEvents_perBar[barID];
+    double f1 = (nTot>0) ? 100.*nXT1_perBar[barID]/nTot : 0.;
+    double f2 = (nTot>0) ? 100.*nXT2_perBar[barID]/nTot : 0.;
+    std::cout << "  bar " << std::setw(2) << barID << " : " << std::setw(8) << nXT1_perBar[barID] << " / " << std::setw(8) << nTot << "   dist1 = " << std::setw(8) << f1 << " %" << "   |   dist2 = " << std::setw(8) << f2 << " %" << std::endl;
+    h1_XTfrac1 -> SetBinContent(barID+1, f1);
+    h1_XTfrac2 -> SetBinContent(barID+1, f2);
+  }
+  double f1tot = (nEvents_tot>0) ? 100.*nXT1_tot/nEvents_tot : 0.;
+  double f2tot = (nEvents_tot>0) ? 100.*nXT2_tot/nEvents_tot : 0.;
+  std::cout << "  TOTAL: " << nXT1_tot << " / " << nEvents_tot
+	    << "   dist1 = " << f1tot << " %   |   dist2 = " << f2tot << " %" << std::endl;
+  std::cout << "  <E_neighbor/E_max> = " << h1_XTratio->GetMean()
+	    << "  (RMS " << h1_XTratio->GetRMS()
+	    << ",  " << h1_XTratio->GetEntries() << " entrances)" << std::endl;
+      
+//.............................................................................................................................
+  
   if (interCalibrationFile_ref != "0")
     std::cout <<"\n[WARNING] REF module calibrations are hard-coded to take Vov 3V and threshold 10. In Sep25 TB no other configurations were acquired." <<std::endl ;
   // summary output sizes
