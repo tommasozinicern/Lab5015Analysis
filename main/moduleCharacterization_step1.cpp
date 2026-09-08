@@ -611,7 +611,7 @@ int main(int argc, char** argv)
         if( totL[j]<-10 || totL[j]>100 ) continue;
 	      if( totR[j]<-10 || totR[j]>100 ) continue;
 	      float en = (energyL[j]+energyR[j])/2.;
-	      if( en > minE[std::make_pair(j, Vov)] && minE[std::make_pair(j, Vov)]>1 && en<1024 && !(vetoOtherBars && nActiveBarsArray > maxActiveBars))
+	      if( en > minE[std::make_pair(j, Vov)] && minE[std::make_pair(j, Vov)]>1 && en<1024)  //&& !(vetoOtherBars && nActiveBarsArray > maxActiveBars)
 	      h1_XTratio -> Fill( en/maxEnF );
       }
     }
@@ -764,9 +764,9 @@ int main(int argc, char** argv)
   double f2tot = (nEvents_tot>0) ? 100.*nXT2_tot/nEvents_tot : 0.;
   std::cout << "  TOTAL: " << nXT1_tot << " / " << nEvents_tot
 	    << "   dist1 = " << f1tot << " %   |   dist2 = " << f2tot << " %" << std::endl;
-  std::cout << "  <E_neighbor/E_max> = " << h1_XTratio->GetMean()
-	    << "  (RMS " << h1_XTratio->GetRMS()
-	    << ",  " << h1_XTratio->GetEntries() << " entrances)" << std::endl;
+  //std::cout << "  <E_neighbor/E_max> = " << h1_XTratio->GetMean()
+	 //   << "  (RMS " << h1_XTratio->GetRMS()
+	 //   << ",  " << h1_XTratio->GetEntries() << " entrances)" << std::endl;
       
 //.............................................................................................................................
   
