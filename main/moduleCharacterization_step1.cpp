@@ -81,7 +81,7 @@ int main(int argc, char** argv)
   
   std::vector<std::string> zombieFiles;
   TOFHIRThresholdZero thrZero(discCalibrationFile,0);
-  int maxActiveBars = 3;
+  int maxActiveBars = 5;
   TChain* tree = new TChain("data","data");
 
   // - energy intercalibration map (if specified in the config) for the DUT module
@@ -590,6 +590,41 @@ int main(int argc, char** argv)
         }
       }
     } // end loop over bars
+    
+    /*...............................................................................................................................
+        // === DEBUG: tabella delle barre, primi N eventi ===
+    static int nDebugPrinted = 0;
+    const  int nDebugMax     = 100;
+    if( nDebugPrinted < nDebugMax )  //aggiungere: nBarsVeto1[maxBar] == 2  Solo eventi con crosstalk su entrambi i lati
+    {                                //            nActiveBarsArray > maxActiveBars Solo eventi che il veto sciami scarterebbe
+      ++nDebugPrinted;               //            nActiveBarsArray <= 3 Solo eventi puliti, con poche barre accese, dove il conteggio è facile da verificare a mano
+      std::cout << "\n========== EVENTO " << entry
+		<< "   (Vov " << Vov << ", vth " << vth << ") ==========" << std::endl;
+      std::cout << "  nActiveBarsArray = " << nActiveBarsArray
+		<< "    maxBar = " << maxBar
+		<< "    maxEn = "  << maxEn
+		<< "    -> veto sciami: "
+		<< ( (nActiveBarsArray > maxActiveBars) ? "SCARTATO" : "tenuto" ) << std::endl;
+      std::cout << "  bar |      totL      totR |   energyL   energyR     media |    minE |  XT1  XT2 | sparata" << std::endl;
+      std::cout << "  ----+--------------------+-----------------------------+---------+-----------+--------" << std::endl;
+
+      for(int b = 0; b < 16; ++b)
+      {
+	bool  fired = (totL[b]>-10 && totR[b]>-10 && totL[b]<50 && totR[b]<50);
+	float mean  = 0.5*(energyL[b]+energyR[b]);
+	std::cout << "  " << std::setw(3) << b << " |"
+		  << std::fixed << std::setprecision(2)
+		  << std::setw(10) << totL[b]    << std::setw(10) << totR[b]    << " |"
+		  << std::setw(10) << energyL[b] << std::setw(10) << energyR[b]
+		  << std::setw(10) << mean       << " |"
+		  << std::setw(8)  << minE[std::make_pair(b,Vov)] << " |"
+		  << std::setw(5)  << nXTBars1[b] << std::setw(5) << nXTBars2[b] << " |"
+		  << ( fired ? "    si" : "    no" )
+		  << ( b==maxBar ? "   <== maxBar" : "" )
+		  << std::endl;
+      }
+    }
+    *///....................................................................................................................................
   
     // CROSSTALK STUDY: counting for the current event 
     float maxEnF   = (energyL[maxBar]+energyR[maxBar])/2.;   // float value of maxEn
