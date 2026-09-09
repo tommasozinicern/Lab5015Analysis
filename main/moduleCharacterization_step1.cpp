@@ -274,6 +274,7 @@ int main(int argc, char** argv)
   std::map<int,long long> nXT2_perBar;      // at least one neighbor at distance 2 active (control)
   long long nEvents_tot = 0, nXT1_tot = 0, nXT2_tot = 0;
   TH1F* h1_XTratio = new TH1F("h1_crosstalkEnergyRatio",";E_{vicino} / E_{maxBar};eventi",240,0.,1.2);
+  std::map<int,TH1F*> h1_XTen[4][3];  // selection: 0 = all, 1 = MIP, 2 = crosstalk bar-1, 3 = crosstalk bar+1
 
   // - Coincidence pre loop
   if( !opts.GetOpt<std::string>("Coincidence.status").compare("yes") &&
@@ -553,15 +554,13 @@ int main(int argc, char** argv)
     int maxBar=0;
     float energySumArray = 0;
     int nActiveBarsArray = 0;
-    int nBarsVeto[16];
-    int nBarsVeto1[16];
-    int nBarsVeto2[16];  
+    int nXTBars1[16];
+    int nXTBars2[16];  
 
     // -- determine DUT active bars
     for(unsigned int iBar = 0; iBar < channelMapping.size()/2; ++iBar) {
-      nBarsVeto[iBar] = 0;
-      nBarsVeto1[iBar] = 0;
-      nBarsVeto2[iBar] = 0;
+      nXTBars1[iBar] = 0;
+      nXTBars2[iBar] = 0;
       if (totL[iBar]>-10 && totR[iBar]>-10 && totL[iBar]<100 && totR[iBar]<100) {
 	      float energyMean=(energyL[iBar]+energyR[iBar])/2;
 	      if (energyL[iBar]>0 && energyR[iBar]>0 && energyMean > 0){
@@ -577,12 +576,11 @@ int main(int argc, char** argv)
          if (totR[jBar]<-10 || totR[jBar]>100) continue;
          float en = (energyL[jBar]+energyR[jBar])/2;
          if ( en > minE[std::make_pair(jBar, Vov)] && minE[std::make_pair(jBar, Vov)]>1 && en<1024 ){
-           nBarsVeto[iBar]+=1;
            int dist = jBar - int(iBar);
            if( dist == 1 || dist == -1 ) 
-           nBarsVeto1[iBar]+=1;
+           nXTBars1[iBar]+=1;
            else
-           nBarsVeto2[iBar]+=1;
+           nXTBars2[iBar]+=1;
          }
         }
         // --- find bar having maximum average energy LR
@@ -593,29 +591,64 @@ int main(int argc, char** argv)
       }
     } // end loop over bars
   
-    // CROSSTALK STUDY: counting for the current event ................................................................................................
+    // CROSSTALK STUDY: counting for the current event 
     float maxEnF   = (energyL[maxBar]+energyR[maxBar])/2.;   // float value of maxEn
     float minE_max = minE[std::make_pair(maxBar, Vov)];
-    if( nActiveBarsArray > 0 && minE_max > 1 && maxEnF > minE_max && maxEnF < 1024 )
-    {
+    const float mipThreshold = 600.; //value of MIP threshold 
+    
+    if( nActiveBarsArray > 0 && maxEnF > mipThreshold && maxEnF < 1024 ) //( nActiveBarsArray > 0 && minE_max > 1 && maxEnF > minE_max && maxEnF < 1024 )
+    {                                  //sicuri che facendo così si isolano solo gli eventi con MIP? Rivedere le frazioni di XT
       nEvents_perBar[maxBar]++;
       nEvents_tot++;
 
-      if( nBarsVeto1[maxBar] > 0 ){ nXT1_perBar[maxBar]++; nXT1_tot++; }
-      if( nBarsVeto2[maxBar] > 0 ){ nXT2_perBar[maxBar]++; nXT2_tot++; }
+      if( nXTBars1[maxBar] > 0 ){ nXT1_perBar[maxBar]++; nXT1_tot++; }           
+      if( nXTBars2[maxBar] > 0 ){ nXT2_perBar[maxBar]++; nXT2_tot++; }
 
-      // --- quanto vale il crosstalk: rapporto di energia con i primi vicini
+      //How much is crosstalk: energy ratio with the nearest neighbors?
       for(int d = -1; d <= 1; d += 2){
 	      int j = maxBar + d;
         if( j < 0 || j > 15 ) continue;
         if( totL[j]<-10 || totL[j]>100 ) continue;
 	      if( totR[j]<-10 || totR[j]>100 ) continue;
 	      float en = (energyL[j]+energyR[j])/2.;
-	      if( en > minE[std::make_pair(j, Vov)] && minE[std::make_pair(j, Vov)]>1 && en<1024)  //&& !(vetoOtherBars && nActiveBarsArray > maxActiveBars)
+	      if( en > 0 && en<1024) //( en > minE[std::make_pair(j, Vov)] && minE[std::make_pair(j, Vov)]>1 && en<1024)  //&& !(vetoOtherBars && nActiveBarsArray > maxActiveBars)
 	      h1_XTratio -> Fill( en/maxEnF );
       }
     }
-    //fine programma....................................................................................................................................................
+    
+    // energy spectrum separated by population
+    if( source == "TB" && vetoOtherBars && nActiveBarsArray > maxActiveBars ) continue;    //apply shower cut
+          
+    for(unsigned int iBar = 0; iBar < channelMapping.size()/2; ++iBar)
+    {
+      //bar have to be trigged
+      if( totL[iBar]<=-10 || totR[iBar]<=-10 || totL[iBar]>=100 || totR[iBar]>=100 ) continue;
+      int index( (10000*int(Vov*100.)) + (100*vth) + iBar );
+      if( h1_XTen[0][0][index] == NULL )
+      {
+	      const char* selName[4]  = {"all","MIP","XTprev","XTnext"};
+	      const char* sideName[3] = {"L","R","L-R"};
+	      for(int iSel = 0; iSel < 4; ++iSel)
+	        for(int iSide = 0; iSide < 3; ++iSide)
+	          h1_XTen[iSel][iSide][index] = new TH1F(Form("h1_XTenergy_%s_bar%02d%s_Vov%.2f_th%02.0f", selName[iSel],iBar,sideName[iSide],Vov,vth),"",
+            map_energyBins[Vov],map_energyMins[Vov],map_energyMaxs[Vov]);
+      }
+      float en[3] = { energyL[iBar], energyR[iBar], 0.5*(energyL[iBar]+energyR[iBar]) };
+      //1) all events
+      for(int iSide = 0; iSide < 3; ++iSide) h1_XTen[0][iSide][index] -> Fill( en[iSide] );
+      //2) only MIP events
+      if( en[2] > mipThreshold )
+	    for(int iSide = 0; iSide < 3; ++iSide) h1_XTen[1][iSide][index] -> Fill( en[iSide] );
+      //3) crosstalk with MIP in iBar-1
+      int jPrev = int(iBar) - 1;
+      if( jPrev >= 0 && totL[jPrev]>-10 && totR[jPrev]>-10 && totL[jPrev]<100 && totR[jPrev]<100 && 0.5*(energyL[jPrev]+energyR[jPrev]) > mipThreshold )
+	    for(int iSide = 0; iSide < 3; ++iSide) h1_XTen[2][iSide][index] -> Fill( en[iSide] );
+      //4) crosstalk with MIP in iBar+1
+      int jNext = int(iBar) + 1;
+      if( jNext <= 15 && totL[jNext]>-10 && totR[jNext]>-10 && totL[jNext]<100 && totR[jNext]<100 && 0.5*(energyL[jNext]+energyR[jNext]) > mipThreshold )
+	    for(int iSide = 0; iSide < 3; ++iSide) h1_XTen[3][iSide][index] -> Fill( en[iSide] );
+    }
+    //end program....................................................................................................................................................
 
     // -- fill histograms and branch info
     for(unsigned int iBar = 0; iBar < channelMapping.size()/2; ++iBar){

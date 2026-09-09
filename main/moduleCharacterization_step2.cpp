@@ -60,6 +60,7 @@ int main(int argc, char** argv)
   system(Form("mkdir -p %s/tot/",plotDir.c_str()));
   system(Form("mkdir -p %s/totRatio/",plotDir.c_str()));
   system(Form("mkdir -p %s/energy/",plotDir.c_str()));
+  system(Form("mkdir -p %s/crosstalk/",plotDir.c_str()));
   system(Form("mkdir -p %s/energyRatio/",plotDir.c_str()));
   system(Form("mkdir -p %s/t1fine/",plotDir.c_str()));
   system(Form("mkdir -p %s/qT1/",plotDir.c_str()));
@@ -482,6 +483,206 @@ int main(int argc, char** argv)
 	}// ---- end loop over L, R, L-R labels	
       }// --- end loop over bars
     } // -- end loop over stepLabels
+    
+
+
+  //  CROSSTALK PLOTS
+  {
+    const char* XTsel[4] = {"all","MIP","XTprev","XTnext"};
+    const char* XTleg[4] = {"all the event","MIP in the bar",
+			    "crosstalk from bar-1","crosstalk from bar+1"};
+    int         XTcol[4] = {kBlack, kBlue, kRed, kGreen+2};
+
+    for(auto stepLabel : stepLabels)
+    {
+      float Vov = map_Vovs[stepLabel];
+      float vth = map_ths[stepLabel];
+
+      for(int iBar = 0; iBar < 16; ++iBar)
+      {
+	bool barFound = std::find(barList.begin(), barList.end(), iBar) != barList.end();
+	if( !barFound ) continue;
+
+	for(auto LRLabel : LRLabels)
+	{
+	  std::string label(Form("bar%02d%s_%s",iBar,LRLabel.c_str(),stepLabel.c_str()));
+
+	  // take the 4 histograms and continue if one of them miss
+	  TH1F* hXT[4];
+	  bool allFound = true;
+	  for(int iSel = 0; iSel < 4; ++iSel){
+	    hXT[iSel] = (TH1F*)( inFile->Get(Form("h1_XTenergy_%s_%s",XTsel[iSel],label.c_str())) );
+	    if( !hXT[iSel] ) allFound = false;
+	  }
+	  if( !allFound ) continue;
+
+	  c = new TCanvas(Form("c_crosstalk_%s",label.c_str()),Form("c_crosstalk_%s",label.c_str()));
+	  gPad -> SetLogy();
+
+	  TLegend* legXT = new TLegend(0.52,0.63,0.89,0.88);
+	  legXT -> SetBorderSize(0);
+	  legXT -> SetFillStyle(0);
+	  legXT -> SetTextFont(42);
+	  legXT -> SetTextSize(0.030);
+
+	  for(int iSel = 0; iSel < 4; ++iSel)
+	  {
+	    hXT[iSel] -> SetTitle(";energy [a.u.];entries");
+	    hXT[iSel] -> SetLineColor(XTcol[iSel]);
+	    hXT[iSel] -> SetLineWidth(2);
+	    hXT[iSel] -> GetXaxis() -> SetRangeUser(0,1024);
+	    hXT[iSel] -> Draw( iSel==0 ? "HIST" : "HIST SAME" );
+	    legXT -> AddEntry(hXT[iSel], Form("%s  (%.0f)",XTleg[iSel],hXT[iSel]->GetEntries()), "l");
+	  }
+	  legXT -> Draw("same");
+
+	  if( LRLabel == "L-R" )
+	    latex = new TLatex(0.16,0.83,Form("#splitline{bar %02d}{V_{OV} = %.2f V, th. = %d DAC}",iBar,Vov,int(vth)));
+	  else
+	    latex = new TLatex(0.16,0.83,Form("#splitline{bar %02d%s}{V_{OV} = %.2f V, th. = %d DAC}",iBar,LRLabel.c_str(),Vov,int(vth)));
+	  latex -> SetNDC();
+	  latex -> SetTextFont(42);
+	  latex -> SetTextSize(0.04);
+	  latex -> SetTextColor(kRed);
+	  latex -> Draw("same");
+
+	  c -> Print(Form("%s/crosstalk/c_crosstalk__%s.png",plotDir.c_str(),label.c_str()));
+	  c -> Print(Form("%s/crosstalk/c_crosstalk__%s.pdf",plotDir.c_str(),label.c_str()));
+
+	  // save histograms in step2 output files
+	  outFile -> cd();
+	  for(int iSel = 0; iSel < 4; ++iSel) hXT[iSel] -> Write();
+
+	  delete c;
+	  delete latex;
+	}
+      }
+    }
+  }
+    
+    
+  // CROSSTALK FRACTIONS
+  {
+    // energy integration limits: the entire histogram
+    const float xtEnergyMin = 0.;
+    const float xtEnergyMax = 1024.;
+
+    const char* sideName[3] = {"L","R","L-R"};
+
+    std::ofstream xtTable(Form("%s/crosstalk/crosstalkFractions.txt",plotDir.c_str()));
+    xtTable << "# crosstalk fraction = N(active neighbor) / N(MIP in the SOURCE bar)" << std::endl;
+    xtTable << "# energy integral from " << xtEnergyMin << " to " << xtEnergyMax << "[include underflow/overflow events]" << std::endl;
+    xtTable << "# frac_prev(X) = N_XTprev(X) / N_MIP(X-1)   [source: previous bar]" << std::endl;
+    xtTable << "# frac_next(X) = N_XTnext(X) / N_MIP(X+1)   [source: next bar]" << std::endl;
+
+    for(auto stepLabel : stepLabels)
+    {
+      float Vov = map_Vovs[stepLabel];
+      float vth = map_ths[stepLabel];
+
+      // collection of counts for all bars
+      double nMIP[16][3], nPrev[16][3], nNext[16][3];
+      for(int iBar = 0; iBar < 16; ++iBar)
+	for(int iSide = 0; iSide < 3; ++iSide){
+	  nMIP[iBar][iSide] = -1.; nPrev[iBar][iSide] = -1.; nNext[iBar][iSide] = -1.;
+	}
+
+      for(int iBar = 0; iBar < 16; ++iBar)
+	for(int iSide = 0; iSide < 3; ++iSide)
+	{
+	  std::string label(Form("bar%02d%s_%s",iBar,sideName[iSide],stepLabel.c_str()));
+	  TH1F* hM = (TH1F*)( inFile->Get(Form("h1_XTenergy_MIP_%s",   label.c_str())) );
+	  TH1F* hP = (TH1F*)( inFile->Get(Form("h1_XTenergy_XTprev_%s",label.c_str())) );
+	  TH1F* hN = (TH1F*)( inFile->Get(Form("h1_XTenergy_XTnext_%s",label.c_str())) );
+	  if( !hM || !hP || !hN ) continue;
+    
+    int b1 = (xtEnergyMin > hM->GetXaxis()->GetXmin()) ? hM->FindBin(xtEnergyMin) : 0;                  //: 1;                 modified for counting
+	  int b2 = (xtEnergyMax < hM->GetXaxis()->GetXmax()) ? hM->FindBin(xtEnergyMax) : hM->GetNbinsX()+1;  //hM->GetNbinsX();     over/underflow
+
+	  nMIP [iBar][iSide] = hM->Integral(b1,b2);
+	  nPrev[iBar][iSide] = hP->Integral(b1,b2);
+	  nNext[iBar][iSide] = hN->Integral(b1,b2);
+    
+	}
+
+      //tab
+      xtTable << "\n=== " << stepLabel << "   (Vov " << Vov << " V, th " << int(vth) << " DAC) ===" << std::endl;
+      xtTable << std::endl;
+      xtTable << "bar  side      N_MIP     N_XTprev    N_XTnext    frac_prev[%]  frac_next[%]" << std::endl;
+      xtTable << "-------------------------------------------------------------------------------" << std::endl;
+
+      for(int iBar = 0; iBar < 16; ++iBar)
+      {
+	for(int iSide = 0; iSide < 3; ++iSide)
+	{
+	  if( nMIP[iBar][iSide] < 0 ) continue;
+
+	  bool okPrev = (iBar-1 >= 0) && (nMIP[iBar-1][iSide] > 0);
+	  bool okNext = (iBar+1 <= 15) && (nMIP[iBar+1][iSide] > 0);
+	  double fPrev = okPrev ? 100.*nPrev[iBar][iSide]/nMIP[iBar-1][iSide] : 0.;
+	  double fNext = okNext ? 100.*nNext[iBar][iSide]/nMIP[iBar+1][iSide] : 0.;
+
+	  xtTable << std::setw(3) << iBar << "  " << std::setw(4) << sideName[iSide]
+		  << std::setw(11) << nMIP [iBar][iSide]
+		  << std::setw(12) << nPrev[iBar][iSide]
+		  << std::setw(12) << nNext[iBar][iSide];
+	  if( okPrev ) xtTable << std::setw(14) << std::fixed << std::setprecision(2) << fPrev;
+	  else         xtTable << std::setw(14) << "n/a";
+	  if( okNext ) xtTable << std::setw(14) << std::fixed << std::setprecision(2) << fNext;
+	  else         xtTable << std::setw(14) << "n/a";
+	  xtTable << std::endl;
+	}
+	// Consistency check: with the complete integral, the three sides must coincide
+	if( nMIP[iBar][0] >= 0 && (nMIP[iBar][0] != nMIP[iBar][2] || nMIP[iBar][1] != nMIP[iBar][2]) )
+	  xtTable << "     [ATTENZIONE] bar " << iBar << ": L, R e L-R hanno conteggi diversi" << std::endl;
+      }
+
+      // graph
+      TGraph* gPrev = new TGraph();
+      TGraph* gNext = new TGraph();
+      for(int iBar = 0; iBar < 16; ++iBar)
+      {
+	if( nMIP[iBar][2] < 0 ) continue;
+	if( iBar-1 >= 0  && nMIP[iBar-1][2] > 0 )
+	  gPrev -> SetPoint(gPrev->GetN(), iBar, 100.*nPrev[iBar][2]/nMIP[iBar-1][2]);
+	if( iBar+1 <= 15 && nMIP[iBar+1][2] > 0 )
+	  gNext -> SetPoint(gNext->GetN(), iBar, 100.*nNext[iBar][2]/nMIP[iBar+1][2]);
+      }
+
+      c = new TCanvas(Form("c_crosstalkFractions_%s",stepLabel.c_str()),
+		      Form("c_crosstalkFractions_%s",stepLabel.c_str()));
+      TH1F* hFrame = gPad -> DrawFrame(-0.5,0.,15.5,119.);
+      hFrame -> SetTitle(";bar ID;frazione di crosstalk [%]");
+
+      gPrev -> SetMarkerStyle(20); gPrev -> SetMarkerColor(kRed);     gPrev -> SetLineColor(kRed);
+      gNext -> SetMarkerStyle(21); gNext -> SetMarkerColor(kGreen+2); gNext -> SetLineColor(kGreen+2);
+      gPrev -> Draw("PL,same");
+      gNext -> Draw("PL,same");
+
+      TLegend* legF = new TLegend(0.45,0.16,0.88,0.32);
+      legF -> SetBorderSize(0);
+      legF -> SetFillStyle(0);
+      legF -> SetTextFont(42);
+      legF -> SetTextSize(0.032);
+      legF -> AddEntry(gPrev,"sorgente = barra precedente","pl");
+      legF -> AddEntry(gNext,"sorgente = barra successiva","pl");
+      legF -> Draw("same");
+
+      latex = new TLatex(0.16,0.83,Form("V_{OV} = %.2f V, th. = %d DAC",Vov,int(vth)));
+      latex -> SetNDC(); latex -> SetTextFont(42); latex -> SetTextSize(0.04); latex -> SetTextColor(kRed);
+      latex -> Draw("same");
+
+      c -> Print(Form("%s/crosstalk/c_crosstalkFractions_%s.png",plotDir.c_str(),stepLabel.c_str()));
+      c -> Print(Form("%s/crosstalk/c_crosstalkFractions_%s.pdf",plotDir.c_str(),stepLabel.c_str()));
+
+      delete c;
+      delete latex;
+    }
+
+    xtTable.close();
+  }
+    
+    
   // -  end 1st plots  
 
   
