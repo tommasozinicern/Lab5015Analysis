@@ -274,7 +274,7 @@ int main(int argc, char** argv)
   std::map<int,long long> nXT2_perBar;      // at least one neighbor at distance 2 active (control)
   long long nEvents_tot = 0, nXT1_tot = 0, nXT2_tot = 0;
   TH1F* h1_XTratio = new TH1F("h1_crosstalkEnergyRatio",";E_{vicino} / E_{maxBar};eventi",240,0.,1.2);
-  std::map<int,TH1F*> h1_XTen[4][3];  // selection: 0 = all, 1 = MIP, 2 = crosstalk bar-1, 3 = crosstalk bar+1
+  std::map<int,TH1F*> h1_XTen[6][3];  // selection: 0 = all, 1 = MIP, 2 = crosstalk bar-1, 3 = crosstalk bar+1, 4 = XT from bar-2, 5 = XT from bar+2
 
   // - Coincidence pre loop
   if( !opts.GetOpt<std::string>("Coincidence.status").compare("yes") &&
@@ -554,8 +554,10 @@ int main(int argc, char** argv)
     int maxBar=0;
     float energySumArray = 0;
     int nActiveBarsArray = 0;
+    int nMIPbars = 0; 
     int nXTBars1[16];
     int nXTBars2[16];  
+    const float mipThreshold = 600.; //value of MIP threshold 
 
     // -- determine DUT active bars
     for(unsigned int iBar = 0; iBar < channelMapping.size()/2; ++iBar) {
@@ -567,7 +569,7 @@ int main(int argc, char** argv)
 	        energySumArray+=energyMean;
 	        nActiveBarsArray+=1;
         }	    
-
+        if( energyMean > mipThreshold ) nMIPbars += 1;
 	      // --- check energy in adjacent bars
 	      for (int jBar = int(iBar) - 2; jBar < int(iBar) + 3; ++jBar){
 	       if (jBar == int(iBar)) continue;
@@ -591,7 +593,7 @@ int main(int argc, char** argv)
       }
     } // end loop over bars
     
-    /*...............................................................................................................................
+    //...............................................................................................................................
         // === DEBUG: tabella delle barre, primi N eventi ===
     static int nDebugPrinted = 0;
     const  int nDebugMax     = 100;
@@ -624,12 +626,11 @@ int main(int argc, char** argv)
 		  << std::endl;
       }
     }
-    *///....................................................................................................................................
+    //....................................................................................................................................
   
     // CROSSTALK STUDY: counting for the current event 
     float maxEnF   = (energyL[maxBar]+energyR[maxBar])/2.;   // float value of maxEn
     float minE_max = minE[std::make_pair(maxBar, Vov)];
-    const float mipThreshold = 600.; //value of MIP threshold 
     
     if( nActiveBarsArray > 0 && maxEnF > mipThreshold && maxEnF < 1024 ) //( nActiveBarsArray > 0 && minE_max > 1 && maxEnF > minE_max && maxEnF < 1024 )
     {                                  //sicuri che facendo così si isolano solo gli eventi con MIP? Rivedere le frazioni di XT
@@ -653,6 +654,7 @@ int main(int argc, char** argv)
     
     // energy spectrum separated by population
     if( source == "TB" && vetoOtherBars && nActiveBarsArray > maxActiveBars ) continue;    //apply shower cut
+    if( source == "TB" && nMIPbars > 1 ) continue;
           
     for(unsigned int iBar = 0; iBar < channelMapping.size()/2; ++iBar)
     {
@@ -661,10 +663,10 @@ int main(int argc, char** argv)
       int index( (10000*int(Vov*100.)) + (100*vth) + iBar );
       if( h1_XTen[0][0][index] == NULL )
       {
-	      const char* selName[4]  = {"all","MIP","XTprev","XTnext"};
-	      const char* sideName[3] = {"L","R","L-R"};
-	      for(int iSel = 0; iSel < 4; ++iSel)
-	        for(int iSide = 0; iSide < 3; ++iSide)
+	      const char* selName[6]  = {"all","MIP","XTprev","XTnext","XTprev2","XTnext2"};
+        	const char* sideName[3] = {"L","R","L-R"};
+	        for(int iSel = 0; iSel < 6; ++iSel)
+	          for(int iSide = 0; iSide < 3; ++iSide)
 	          h1_XTen[iSel][iSide][index] = new TH1F(Form("h1_XTenergy_%s_bar%02d%s_Vov%.2f_th%02.0f", selName[iSel],iBar,sideName[iSide],Vov,vth),"",
             map_energyBins[Vov],map_energyMins[Vov],map_energyMaxs[Vov]);
       }
@@ -682,6 +684,18 @@ int main(int argc, char** argv)
       int jNext = int(iBar) + 1;
       if( jNext <= 15 && totL[jNext]>-10 && totR[jNext]>-10 && totL[jNext]<100 && totR[jNext]<100 && 0.5*(energyL[jNext]+energyR[jNext]) > mipThreshold )
 	    for(int iSide = 0; iSide < 3; ++iSide) h1_XTen[3][iSide][index] -> Fill( en[iSide] );
+      //5) crosstalk dal secondo vicino precedente: MIP in iBar-2
+      int jPrev2 = int(iBar) - 2;
+      if( jPrev2 >= 0 &&
+	    totL[jPrev2]>-10 && totR[jPrev2]>-10 && totL[jPrev2]<50 && totR[jPrev2]<50 &&
+	    0.5*(energyL[jPrev2]+energyR[jPrev2]) > mipThreshold )
+	    for(int iSide = 0; iSide < 3; ++iSide) h1_XTen[4][iSide][index] -> Fill( en[iSide] );
+      //6) crosstalk dal secondo vicino successivo: MIP in iBar+2
+      int jNext2 = int(iBar) + 2;
+      if( jNext2 <= 15 &&
+	    totL[jNext2]>-10 && totR[jNext2]>-10 && totL[jNext2]<50 && totR[jNext2]<50 &&
+      0.5*(energyL[jNext2]+energyR[jNext2]) > mipThreshold )
+	    for(int iSide = 0; iSide < 3; ++iSide) h1_XTen[5][iSide][index] -> Fill( en[iSide] );
     }
     //end program....................................................................................................................................................
 

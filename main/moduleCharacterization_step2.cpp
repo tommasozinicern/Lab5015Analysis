@@ -488,10 +488,11 @@ int main(int argc, char** argv)
 
   //  CROSSTALK PLOTS
   {
-    const char* XTsel[4] = {"all","MIP","XTprev","XTnext"};
-    const char* XTleg[4] = {"all the event","MIP in the bar",
-			    "crosstalk from bar-1","crosstalk from bar+1"};
-    int         XTcol[4] = {kBlack, kBlue, kRed, kGreen+2};
+    const char* XTsel[6] = {"all","MIP","XTprev","XTnext","XTprev2","XTnext2"};
+    const char* XTleg[6] = {"tutti gli eventi","MIP nella barra",
+			    "crosstalk da bar-1","crosstalk da bar+1",
+			    "crosstalk da bar-2","crosstalk da bar+2"};
+    int         XTcol[6] = {kBlack, kBlue, kRed, kGreen+2, kMagenta+1, kOrange+7};
 
     for(auto stepLabel : stepLabels)
     {
@@ -508,9 +509,9 @@ int main(int argc, char** argv)
 	  std::string label(Form("bar%02d%s_%s",iBar,LRLabel.c_str(),stepLabel.c_str()));
 
 	  // take the 4 histograms and continue if one of them miss
-	  TH1F* hXT[4];
+	  TH1F* hXT[6];
 	  bool allFound = true;
-	  for(int iSel = 0; iSel < 4; ++iSel){
+	  for(int iSel = 0; iSel < 6; ++iSel){
 	    hXT[iSel] = (TH1F*)( inFile->Get(Form("h1_XTenergy_%s_%s",XTsel[iSel],label.c_str())) );
 	    if( !hXT[iSel] ) allFound = false;
 	  }
@@ -519,13 +520,13 @@ int main(int argc, char** argv)
 	  c = new TCanvas(Form("c_crosstalk_%s",label.c_str()),Form("c_crosstalk_%s",label.c_str()));
 	  gPad -> SetLogy();
 
-	  TLegend* legXT = new TLegend(0.52,0.63,0.89,0.88);
+    TLegend* legXT = new TLegend(0.50,0.55,0.89,0.88);
 	  legXT -> SetBorderSize(0);
 	  legXT -> SetFillStyle(0);
 	  legXT -> SetTextFont(42);
 	  legXT -> SetTextSize(0.030);
 
-	  for(int iSel = 0; iSel < 4; ++iSel)
+	  for(int iSel = 0; iSel < 6; ++iSel)
 	  {
 	    hXT[iSel] -> SetTitle(";energy [a.u.];entries");
 	    hXT[iSel] -> SetLineColor(XTcol[iSel]);
@@ -551,7 +552,7 @@ int main(int argc, char** argv)
 
 	  // save histograms in step2 output files
 	  outFile -> cd();
-	  for(int iSel = 0; iSel < 4; ++iSel) hXT[iSel] -> Write();
+	  for(int iSel = 0; iSel < 6; ++iSel) hXT[iSel] -> Write();
 
 	  delete c;
 	  delete latex;
@@ -581,7 +582,7 @@ int main(int argc, char** argv)
       float vth = map_ths[stepLabel];
 
       // collection of counts for all bars
-      double nMIP[16][3], nPrev[16][3], nNext[16][3];
+      double nMIP[16][3], nPrev[16][3], nNext[16][3], nPrev2[16][3], nNext2[16][3];
       for(int iBar = 0; iBar < 16; ++iBar)
 	for(int iSide = 0; iSide < 3; ++iSide){
 	  nMIP[iBar][iSide] = -1.; nPrev[iBar][iSide] = -1.; nNext[iBar][iSide] = -1.;
@@ -594,6 +595,9 @@ int main(int argc, char** argv)
 	  TH1F* hM = (TH1F*)( inFile->Get(Form("h1_XTenergy_MIP_%s",   label.c_str())) );
 	  TH1F* hP = (TH1F*)( inFile->Get(Form("h1_XTenergy_XTprev_%s",label.c_str())) );
 	  TH1F* hN = (TH1F*)( inFile->Get(Form("h1_XTenergy_XTnext_%s",label.c_str())) );
+    TH1F* hP2 = (TH1F*)( inFile->Get(Form("h1_XTenergy_XTprev2_%s",label.c_str())) );
+	  TH1F* hN2 = (TH1F*)( inFile->Get(Form("h1_XTenergy_XTnext2_%s",label.c_str())) );
+	  if( !hP2 || !hN2 ) continue;
 	  if( !hM || !hP || !hN ) continue;
     
     int b1 = (xtEnergyMin > hM->GetXaxis()->GetXmin()) ? hM->FindBin(xtEnergyMin) : 0;                  //: 1;                 modified for counting
@@ -602,6 +606,8 @@ int main(int argc, char** argv)
 	  nMIP [iBar][iSide] = hM->Integral(b1,b2);
 	  nPrev[iBar][iSide] = hP->Integral(b1,b2);
 	  nNext[iBar][iSide] = hN->Integral(b1,b2);
+    nPrev2[iBar][iSide] = hP2->Integral(b1,b2);
+	  nNext2[iBar][iSide] = hN2->Integral(b1,b2);
     
 	}
 
@@ -621,6 +627,10 @@ int main(int argc, char** argv)
 	  bool okNext = (iBar+1 <= 15) && (nMIP[iBar+1][iSide] > 0);
 	  double fPrev = okPrev ? 100.*nPrev[iBar][iSide]/nMIP[iBar-1][iSide] : 0.;
 	  double fNext = okNext ? 100.*nNext[iBar][iSide]/nMIP[iBar+1][iSide] : 0.;
+    bool okPrev2 = (iBar-2 >= 0)  && (nMIP[iBar-2][iSide] > 0);
+	  bool okNext2 = (iBar+2 <= 15) && (nMIP[iBar+2][iSide] > 0);
+	  double fPrev2 = okPrev2 ? 100.*nPrev2[iBar][iSide]/nMIP[iBar-2][iSide] : 0.;
+	  double fNext2 = okNext2 ? 100.*nNext2[iBar][iSide]/nMIP[iBar+2][iSide] : 0.;
 
 	  xtTable << std::setw(3) << iBar << "  " << std::setw(4) << sideName[iSide]
 		  << std::setw(11) << nMIP [iBar][iSide]
