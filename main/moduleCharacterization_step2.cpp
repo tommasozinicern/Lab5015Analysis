@@ -489,76 +489,210 @@ int main(int argc, char** argv)
   //  CROSSTALK PLOTS
   {
     const char* XTsel[6] = {"all","MIP","XTprev","XTnext","XTprev2","XTnext2"};
-    const char* XTleg[6] = {"tutti gli eventi","MIP nella barra",
-			    "crosstalk da bar-1","crosstalk da bar+1",
-			    "crosstalk da bar-2","crosstalk da bar+2"};
+    const char* XTleg[6] = {"all events","MIP in the bar",
+			    "crosstalk from bar-1","crosstalk from bar+1",
+			    "crosstalk from bar-2","crosstalk from bar+2"};
     int         XTcol[6] = {kBlack, kBlue, kRed, kGreen+2, kMagenta+1, kOrange+7};
+    
+    std::ofstream xtPeaks(Form("%s/crosstalk/crosstalkPeaks.txt",plotDir.c_str()));
+    xtPeaks << "# k = crosstalk peak / MIP peak (same channel)" << std::endl;
+    xtPeaks << "# MIP peak: vertex of a parabola in the region above 60% of the maximum" << std::endl;
+    xtPeaks << "# crosstalk peaks: maximum of a Landau distribution fitted around the peak" << std::endl;
+    
+  //landau fit for energy fractions
+  // mode 0 = parable   (MIP peak)
+  // mode 1 = Landau, asimmetric ranhe (crosstalk peak)
+  auto fitPeak = [](TH1F* h, int color, int mode, double fracLo, double fracHi, double xminSearch = 40.) -> double
+  {
+    if( !h || h->GetEntries() < 200 ) return -1.;//no null hist or low statistics
+
+    const int nSm = 4;                                   // half-width of the average
+    int nb = h->GetNbinsX();
+    int b1 = std::max( h->FindBin(xminSearch), 1+nSm );
+
+    //maximum of the average: stable even on flat peaks
+    int    bpk  = b1;
+    double best = -1.;
+    for(int b = b1; b <= nb-nSm; ++b){
+      double s = 0.;
+      for(int k = -nSm; k <= nSm; ++k) s += h->GetBinContent(b+k);
+      if( s > best ){ best = s; bpk = b; }
+    }
+    if( best <= 0. ) return -1.;
+    double ymax = best/(2.*nSm+1.);
+    double xpk  = h->GetBinCenter(bpk);
+
+    //fit range
+    int blo = bpk;  while( blo > 1  && h->GetBinContent(blo-1) > fracLo*ymax ) --blo;
+    int bhi = bpk;  while( bhi < nb && h->GetBinContent(bhi+1) > fracHi*ymax ) ++bhi;
+    if( bhi - blo < 5 ) return xpk;                      
+
+    double xlo = h->GetBinCenter(blo);   //range points converted into energy
+    double xhi = h->GetBinCenter(bhi);
+
+    TF1*   f     = 0;
+    double xpeak = xpk;
+
+    if( mode == 0 )                                      //parable
+    {
+      f = new TF1(Form("f_%s",h->GetName()),"pol2",xlo,xhi);
+      h -> Fit(f,"QRN");
+      double p1 = f->GetParameter(1), p2 = f->GetParameter(2);
+      if( p2 < 0. ) xpeak = -p1/(2.*p2);
+    }
+    else                                                 //Landau
+    {
+      f = new TF1(Form("f_%s",h->GetName()),"[0]*TMath::Landau(x,[1],[2])",xlo,xhi);
+      f -> SetParameters( ymax, xpk, 0.15*xpk );
+      f -> SetParLimits(1, xlo, xhi);
+      f -> SetParLimits(2, 0., xpk);
+      h -> Fit(f,"QRN");
+      xpeak = f -> GetMaximumX(xlo,xhi);
+    }
+
+    bool ok = ( xpeak > xlo && xpeak < xhi );
+    if( !ok ) xpeak = xpk;                               // ripiego sul bin massimo
+
+    /*std::cout << "  [FIT] " << h->GetName()
+	      << (mode==0 ? "  [pol2]  " : "  [landau]")
+	      << "   binMax@" << xpk
+	      << "   range [" << xlo << ", " << xhi << "]"
+	      << "   ->  " << xpeak
+	      << (ok ? "" : "   (ripiego sul bin)") << std::endl;*/    //diagnostic test of fit 
+
+    f -> SetLineColor(color);
+    f -> SetLineStyle(2);
+    f -> SetLineWidth(2);
+    f -> Draw("same");
+
+    return xpeak;
+  };
 
     for(auto stepLabel : stepLabels)
     {
       float Vov = map_Vovs[stepLabel];
       float vth = map_ths[stepLabel];
+      
+      
+      // Nhit histo drawing
+      {
+      	TH1F* hNhit    = (TH1F*)( inFile->Get(Form("h1_Nhit_%s",   stepLabel.c_str())) );
+	      TH1F* hNhitMIP = (TH1F*)( inFile->Get(Form("h1_NhitMIP_%s",stepLabel.c_str())) );
+	      if( hNhit && hNhitMIP )
+	      {
+	      c = new TCanvas(Form("c_Nhit_%s",stepLabel.c_str()),Form("c_Nhit_%s",stepLabel.c_str()));
+	      gPad -> SetLogy(); //log scale
+
+    	  hNhit    -> SetTitle(";n. barre per evento;eventi");
+    	  hNhit    -> SetLineColor(kBlack);  hNhit    -> SetLineWidth(2);
+    	  hNhitMIP -> SetLineColor(kRed);    hNhitMIP -> SetLineWidth(2);
+        
+    	  double ymax = std::max( hNhit->GetMaximum(), hNhitMIP->GetMaximum() );
+    	  hNhit -> SetMaximum( 3.*ymax ); 
+    	  hNhit -> SetMinimum( 0.5 );       
+        
+    	  hNhit    -> Draw("HIST");
+        hNhitMIP -> Draw("HIST SAME");
+
+	      TLegend* legN = new TLegend(0.45,0.72,0.89,0.88);
+	      legN -> SetBorderSize(0);  legN -> SetFillStyle(0);
+	      legN -> SetTextFont(42);   legN -> SetTextSize(0.032);
+	      legN -> AddEntry(hNhit,    Form("active bars"), "l");
+	      legN -> AddEntry(hNhitMIP, Form("bars with MIP"), "l");
+	      legN -> Draw("same");
+       
+	      latex = new TLatex(0.16,0.83,Form("V_{OV} = %.2f V, th. = %d DAC",Vov,int(vth)));
+	      latex -> SetNDC();  latex -> SetTextFont(42);
+	      latex -> SetTextSize(0.04);  latex -> SetTextColor(kRed);
+	      latex -> Draw("same");
+       
+	      outFile -> cd();
+	      hNhit -> Write();  hNhitMIP -> Write();
+       
+	      c -> Print(Form("%s/crosstalk/c_Nhit_%s.png",plotDir.c_str(),stepLabel.c_str()));
+	      c -> Print(Form("%s/crosstalk/c_Nhit_%s.pdf",plotDir.c_str(),stepLabel.c_str()));
+	      delete c;  delete latex;
+	      }
+      }
+      
 
       for(int iBar = 0; iBar < 16; ++iBar)
       {
-	bool barFound = std::find(barList.begin(), barList.end(), iBar) != barList.end();
-	if( !barFound ) continue;
+      	bool barFound = std::find(barList.begin(), barList.end(), iBar) != barList.end();
+      	if( !barFound ) continue;
+      
+      	for(auto LRLabel : LRLabels)
+	      {
+	        std::string label(Form("bar%02d%s_%s",iBar,LRLabel.c_str(),stepLabel.c_str()));
 
-	for(auto LRLabel : LRLabels)
-	{
-	  std::string label(Form("bar%02d%s_%s",iBar,LRLabel.c_str(),stepLabel.c_str()));
-
-	  // take the 4 histograms and continue if one of them miss
-	  TH1F* hXT[6];
-	  bool allFound = true;
-	  for(int iSel = 0; iSel < 6; ++iSel){
-	    hXT[iSel] = (TH1F*)( inFile->Get(Form("h1_XTenergy_%s_%s",XTsel[iSel],label.c_str())) );
-	    if( !hXT[iSel] ) allFound = false;
-	  }
-	  if( !allFound ) continue;
-
-	  c = new TCanvas(Form("c_crosstalk_%s",label.c_str()),Form("c_crosstalk_%s",label.c_str()));
-	  gPad -> SetLogy();
-
-    TLegend* legXT = new TLegend(0.50,0.55,0.89,0.88);
-	  legXT -> SetBorderSize(0);
-	  legXT -> SetFillStyle(0);
-	  legXT -> SetTextFont(42);
-	  legXT -> SetTextSize(0.030);
-
-	  for(int iSel = 0; iSel < 6; ++iSel)
-	  {
-	    hXT[iSel] -> SetTitle(";energy [a.u.];entries");
-	    hXT[iSel] -> SetLineColor(XTcol[iSel]);
-	    hXT[iSel] -> SetLineWidth(2);
-	    hXT[iSel] -> GetXaxis() -> SetRangeUser(0,1024);
-	    hXT[iSel] -> Draw( iSel==0 ? "HIST" : "HIST SAME" );
-	    legXT -> AddEntry(hXT[iSel], Form("%s  (%.0f)",XTleg[iSel],hXT[iSel]->GetEntries()), "l");
-	  }
-	  legXT -> Draw("same");
-
-	  if( LRLabel == "L-R" )
-	    latex = new TLatex(0.16,0.83,Form("#splitline{bar %02d}{V_{OV} = %.2f V, th. = %d DAC}",iBar,Vov,int(vth)));
-	  else
-	    latex = new TLatex(0.16,0.83,Form("#splitline{bar %02d%s}{V_{OV} = %.2f V, th. = %d DAC}",iBar,LRLabel.c_str(),Vov,int(vth)));
-	  latex -> SetNDC();
-	  latex -> SetTextFont(42);
-	  latex -> SetTextSize(0.04);
-	  latex -> SetTextColor(kRed);
-	  latex -> Draw("same");
-
-	  c -> Print(Form("%s/crosstalk/c_crosstalk__%s.png",plotDir.c_str(),label.c_str()));
-	  c -> Print(Form("%s/crosstalk/c_crosstalk__%s.pdf",plotDir.c_str(),label.c_str()));
-
-	  // save histograms in step2 output files
-	  outFile -> cd();
-	  for(int iSel = 0; iSel < 6; ++iSel) hXT[iSel] -> Write();
-
-	  delete c;
-	  delete latex;
-	}
+	        // take the 4 histograms and continue if one of them miss
+      	  TH1F* hXT[6];
+      	  bool allFound = true;
+      	  for(int iSel = 0; iSel < 6; ++iSel){
+      	    hXT[iSel] = (TH1F*)( inFile->Get(Form("h1_XTenergy_%s_%s",XTsel[iSel],label.c_str())) );
+      	    if( !hXT[iSel] ) allFound = false;
+      	  }
+      	  if( !allFound ) continue;
+      
+      	  c = new TCanvas(Form("c_crosstalk_%s",label.c_str()),Form("c_crosstalk_%s",label.c_str()));
+      	  gPad -> SetLogy();
+      
+          TLegend* legXT = new TLegend(0.50,0.55,0.89,0.88);
+      	  legXT -> SetBorderSize(0);
+      	  legXT -> SetFillStyle(0);
+      	  legXT -> SetTextFont(42);
+      	  legXT -> SetTextSize(0.030);
+      
+      	  for(int iSel = 0; iSel < 6; ++iSel)
+      	  {
+      	    hXT[iSel] -> SetTitle(";energy [a.u.];entries");
+      	    hXT[iSel] -> SetLineColor(XTcol[iSel]);
+      	    hXT[iSel] -> SetLineWidth(2);
+      	    hXT[iSel] -> GetXaxis() -> SetRangeUser(0,1024);
+      	    hXT[iSel] -> Draw( iSel==0 ? "HIST" : "HIST SAME" );
+      	    legXT -> AddEntry(hXT[iSel], Form("%s  (%.0f)",XTleg[iSel],hXT[iSel]->GetEntries()), "l");
+      	  }
+      	  legXT -> Draw("same");
+          
+          //fit print
+	        double pkMIP   = fitPeak(hXT[1], kBlue,      0, 0.60, 0.60);   //parabola, little range
+	        double pkPrev  = fitPeak(hXT[2], kRed,       1, 0.40, 0.10);   // Landau, asimmetric range
+	        double pkNext  = fitPeak(hXT[3], kGreen+2,   1, 0.40, 0.10);
+          double pkPrev2 = fitPeak(hXT[4], kMagenta+1, 1, 0.40, 0.10);
+          double pkNext2 = fitPeak(hXT[5], kOrange+7,  1, 0.40, 0.10);
+      
+          if( pkMIP > 0 ){
+	        xtPeaks << "  " << label;
+	        if( pkPrev  > 0 ) xtPeaks << "   XTprev = "  << 100.*pkPrev /pkMIP << " %"; else xtPeaks << "   XTprev = n/a";
+	        if( pkNext  > 0 ) xtPeaks << "   XTnext = "  << 100.*pkNext /pkMIP << " %"; else xtPeaks << "   XTnext = n/a";
+	        if( pkPrev2 > 0 ) xtPeaks << "   XTprev2 = " << 100.*pkPrev2/pkMIP << " %"; else xtPeaks << "   XTprev2 = n/a";
+	        if( pkNext2 > 0 ) xtPeaks << "   XTnext2 = " << 100.*pkNext2/pkMIP << " %"; else xtPeaks << "   XTnext2 = n/a";
+	        xtPeaks << std::endl;
+	        }
+      
+      	  if( LRLabel == "L-R" )
+      	    latex = new TLatex(0.16,0.83,Form("#splitline{bar %02d}{V_{OV} = %.2f V, th. = %d DAC}",iBar,Vov,int(vth)));
+      	  else
+      	    latex = new TLatex(0.16,0.83,Form("#splitline{bar %02d%s}{V_{OV} = %.2f V, th. = %d DAC}",iBar,LRLabel.c_str(),Vov,int(vth)));
+      	  latex -> SetNDC();
+      	  latex -> SetTextFont(42);
+      	  latex -> SetTextSize(0.04);
+      	  latex -> SetTextColor(kRed);
+      	  latex -> Draw("same");
+      
+      	  c -> Print(Form("%s/crosstalk/c_crosstalk__%s.png",plotDir.c_str(),label.c_str()));
+      	  c -> Print(Form("%s/crosstalk/c_crosstalk__%s.pdf",plotDir.c_str(),label.c_str()));
+      
+      	  // save histograms in step2 output files
+      	  outFile -> cd();
+      	  for(int iSel = 0; iSel < 6; ++iSel) hXT[iSel] -> Write();
+      
+      	  delete c;
+          delete latex;
+        }
       }
     }
+    xtPeaks.close();
   }
     
     
@@ -585,7 +719,11 @@ int main(int argc, char** argv)
       double nMIP[16][3], nPrev[16][3], nNext[16][3], nPrev2[16][3], nNext2[16][3];
       for(int iBar = 0; iBar < 16; ++iBar)
 	for(int iSide = 0; iSide < 3; ++iSide){
-	  nMIP[iBar][iSide] = -1.; nPrev[iBar][iSide] = -1.; nNext[iBar][iSide] = -1.;
+	  nMIP[iBar][iSide]   = -1.;
+	  nPrev[iBar][iSide]  = -1.;  
+    nNext[iBar][iSide]  = -1.;
+	  nPrev2[iBar][iSide] = -1.;  
+    nNext2[iBar][iSide] = -1.;
 	}
 
       for(int iBar = 0; iBar < 16; ++iBar)
@@ -614,8 +752,8 @@ int main(int argc, char** argv)
       //tab
       xtTable << "\n=== " << stepLabel << "   (Vov " << Vov << " V, th " << int(vth) << " DAC) ===" << std::endl;
       xtTable << std::endl;
-      xtTable << "bar  side      N_MIP     N_XTprev    N_XTnext    frac_prev[%]  frac_next[%]" << std::endl;
-      xtTable << "-------------------------------------------------------------------------------" << std::endl;
+            xtTable << "bar  side      N_MIP     N_XTprev    N_XTnext    frac_prev[%]  frac_next[%]  frac_prev2[%]  frac_next2[%]" << std::endl;
+      xtTable << "-------------------------------------------------------------------------------------------------------" << std::endl;
 
       for(int iBar = 0; iBar < 16; ++iBar)
       {
@@ -640,6 +778,10 @@ int main(int argc, char** argv)
 	  else         xtTable << std::setw(14) << "n/a";
 	  if( okNext ) xtTable << std::setw(14) << std::fixed << std::setprecision(2) << fNext;
 	  else         xtTable << std::setw(14) << "n/a";
+    if( okPrev2 ) xtTable << std::setw(15) << std::fixed << std::setprecision(2) << fPrev2;
+	  else          xtTable << std::setw(15) << "n/a";
+	  if( okNext2 ) xtTable << std::setw(15) << std::fixed << std::setprecision(2) << fNext2;
+	  else          xtTable << std::setw(15) << "n/a";
 	  xtTable << std::endl;
 	}
 	// Consistency check: with the complete integral, the three sides must coincide
