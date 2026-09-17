@@ -6,8 +6,8 @@ ROOT.gErrorIgnoreLevel = ROOT.kWarning
 
 # -------------------------------------------------------
 # YOUR PATHS
-eos_path = "/eos/home-s/spalluot/MTD/TB_CERN_Sep25/Lab5015Analysis"
-outdir_base = "/eos/home-s/spalluot/www/MTD/MTDTB_CERN_Sep25/energy_intercalibration/"
+eos_path = "/afs/cern.ch/user/t/tzini/private/tzini/Lab5015Analysis"
+outdir_base = "/eos/user/t/tzini/TestBeamAnalysis/plot/energy_intercalibration/"
 # ------------------------------------------------------- 
 
 # ------- parser -------
@@ -120,7 +120,7 @@ for key,h in h_energy.items():
     if "L-R" == side:
         continue
     h_clone = h.Clone()
-    f_landau, result = fit_landau_langaus(h_clone, min_energy_dict[(bar,vov)], 850, landau_only=True)
+    f_landau, result = fit_landau_langaus(h_clone, min_energy_dict[(bar,vov)], 940, landau_only=True)
     if result is None:
         print(f"[WARNING] Fit failed for {key}")
         failed_keys.append(key)
@@ -305,7 +305,7 @@ if args.drawMPVvsBar:
         if side == "L-R":
             continue
         h_clone = h.Clone()
-        _,result = fit_landau_langaus(h_clone, min_energy_dict[(bar,vov)], 850, landau_only=True)
+        _,result = fit_landau_langaus(h_clone, min_energy_dict[(bar,vov)], 940, landau_only=True)
         mpv_raw[key] = result["landau_mpv"]
         mpv_tof[key] = mpv_raw[key]*calib_tofhir_only[key]
         mpv_lo[key] = mpv_raw[key]*calib_LO[(bar,side)]
