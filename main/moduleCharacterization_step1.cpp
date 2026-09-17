@@ -81,7 +81,6 @@ int main(int argc, char** argv)
   
   std::vector<std::string> zombieFiles;
   TOFHIRThresholdZero thrZero(discCalibrationFile,0);
-  int maxActiveBars = 5;
   TChain* tree = new TChain("data","data");
 
   // - energy intercalibration map (if specified in the config) for the DUT module
@@ -223,6 +222,8 @@ int main(int argc, char** argv)
   
   // - read minimum energy for each bar from the minEnergies cfg file
   int vetoOtherBars = opts.GetOpt<int>("Cuts.vetoOtherBars");
+  float mipThreshold  = opts.GetOpt<float>("Crosstalk.mipThreshold");
+  int   maxActiveBars = opts.GetOpt<int>  ("Crosstalk.maxActiveBars");
   std::string minEnergiesFileName = opts.GetOpt<std::string>("Cuts.minEnergiesFileName");
   std::map < std::pair<int, float>, float> minE;
   if (minEnergiesFileName != "") {
@@ -267,6 +268,8 @@ int main(int argc, char** argv)
   std::map<int,TCanvas*> c;
   std::map<int,std::vector<float>*> rangesLR;
   std::map<int,bool> acceptEvent;
+  std::map<int,TH1F*> h1_Nhit;      // acrive bars per event
+  std::map<int,TH1F*> h1_NhitMIP;   // acrive bars per event over MIPthreshold
   
   // crosstalk study variables
   std::map<int,long long> nEvents_perBar;   // denominator: good events with maxBar = this bar
@@ -557,7 +560,6 @@ int main(int argc, char** argv)
     int nMIPbars = 0; 
     int nXTBars1[16];
     int nXTBars2[16];  
-    const float mipThreshold = 600.; //value of MIP threshold 
 
     // -- determine DUT active bars
     for(unsigned int iBar = 0; iBar < channelMapping.size()/2; ++iBar) {
@@ -593,9 +595,21 @@ int main(int argc, char** argv)
       }
     } // end loop over bars
     
+    // Nhit histogram filling
+    int indexStep( (10000*int(Vov*100.)) + (100*vth) );
+    if( h1_Nhit[indexStep] == NULL )
+    {
+      h1_Nhit[indexStep] = new TH1F(Form("h1_Nhit_Vov%.2f_th%02.0f",Vov,vth),
+				    ";n. barre per evento;eventi",17,-0.5,16.5);
+      h1_NhitMIP[indexStep] = new TH1F(Form("h1_NhitMIP_Vov%.2f_th%02.0f",Vov,vth),
+				       ";n. barre per evento;eventi",17,-0.5,16.5);
+    }
+    h1_Nhit   [indexStep] -> Fill( nActiveBarsArray );
+    h1_NhitMIP[indexStep] -> Fill( nMIPbars );
+    
     //...............................................................................................................................
         // === DEBUG: tabella delle barre, primi N eventi ===
-    static int nDebugPrinted = 0;
+    /*static int nDebugPrinted = 0;
     const  int nDebugMax     = 100;
     if( nDebugPrinted < nDebugMax )  //aggiungere: nBarsVeto1[maxBar] == 2  Solo eventi con crosstalk su entrambi i lati
     {                                //            nActiveBarsArray > maxActiveBars Solo eventi che il veto sciami scarterebbe
@@ -625,7 +639,7 @@ int main(int argc, char** argv)
 		  << ( b==maxBar ? "   <== maxBar" : "" )
 		  << std::endl;
       }
-    }
+    }*/
     //....................................................................................................................................
   
     // CROSSTALK STUDY: counting for the current event 

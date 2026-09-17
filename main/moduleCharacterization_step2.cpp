@@ -56,6 +56,14 @@ int main(int argc, char** argv)
   
   // - get parameters
   std::string plotDir = opts.GetOpt<std::string>("Output.plotDir");
+  float xtPeakSearchMin = opts.GetOpt<float>("Crosstalk.peakSearchMin");
+  int   xtSmoothing     = opts.GetOpt<int>  ("Crosstalk.peakSmoothing");
+  float xtMipFitFrac    = opts.GetOpt<float>("Crosstalk.mipFitFrac");
+  float xtFitFracLo     = opts.GetOpt<float>("Crosstalk.xtFitFracLo");
+  float xtFitFracHi     = opts.GetOpt<float>("Crosstalk.xtFitFracHi");
+  int   xtFitMode       = opts.GetOpt<int>  ("Crosstalk.xtFitMode");
+  int   mipFitMode    = opts.GetOpt<int>  ("Crosstalk.mipFitMode");
+  float xtMipFitFracHi = opts.GetOpt<float>("Crosstalk.mipFitFracHi");
   system(Form("mkdir -p %s",plotDir.c_str()));
   system(Form("mkdir -p %s/tot/",plotDir.c_str()));
   system(Form("mkdir -p %s/totRatio/",plotDir.c_str()));
@@ -499,18 +507,21 @@ int main(int argc, char** argv)
     xtPeaks << "# MIP peak: vertex of a parabola in the region above 60% of the maximum" << std::endl;
     xtPeaks << "# crosstalk peaks: maximum of a Landau distribution fitted around the peak" << std::endl;
     
-  //landau fit for energy fractions
-  // mode 0 = parable   (MIP peak)
-  // mode 1 = Landau, asimmetric ranhe (crosstalk peak)
-  auto fitPeak = [](TH1F* h, int color, int mode, double fracLo, double fracHi, double xminSearch = 40.) -> double
+  // mode: 0 = parabola | 1 = Landau | 2 = gaussiana | 3 = langaus
+  // isMIP: true  -> usa mipFitFrac / mipFitFracHi
+  //        false -> usa xtFitFracLo / xtFitFracHi
+  auto fitPeak = [&](TH1F* h, int color, int mode, bool isMIP) -> double
   {
-    if( !h || h->GetEntries() < 200 ) return -1.;//no null hist or low statistics
+    if( !h || h->GetEntries() < 200 ) return -1.;
 
-    const int nSm = 4;                                   // half-width of the average
+    double fracLo = isMIP ? xtMipFitFrac : xtFitFracLo;
+    double fracHi = isMIP ? xtMipFitFracHi : xtFitFracHi;
+
+    const int nSm = xtSmoothing;
     int nb = h->GetNbinsX();
-    int b1 = std::max( h->FindBin(xminSearch), 1+nSm );
+    int b1 = std::max( h->FindBin(xtPeakSearchMin), 1+nSm );
 
-    //maximum of the average: stable even on flat peaks
+    // massimo della media mobile: stabile anche su picchi piatti
     int    bpk  = b1;
     double best = -1.;
     for(int b = b1; b <= nb-nSm; ++b){
@@ -522,25 +533,25 @@ int main(int argc, char** argv)
     double ymax = best/(2.*nSm+1.);
     double xpk  = h->GetBinCenter(bpk);
 
-    //fit range
+    // finestra di fit
     int blo = bpk;  while( blo > 1  && h->GetBinContent(blo-1) > fracLo*ymax ) --blo;
     int bhi = bpk;  while( bhi < nb && h->GetBinContent(bhi+1) > fracHi*ymax ) ++bhi;
-    if( bhi - blo < 5 ) return xpk;                      
+    if( bhi - blo < 5 ) return xpk;
 
-    double xlo = h->GetBinCenter(blo);   //range points converted into energy
+    double xlo = h->GetBinCenter(blo);
     double xhi = h->GetBinCenter(bhi);
 
     TF1*   f     = 0;
     double xpeak = xpk;
 
-    if( mode == 0 )                                      //parable
+    if( mode == 0 )                                      // parabola
     {
       f = new TF1(Form("f_%s",h->GetName()),"pol2",xlo,xhi);
       h -> Fit(f,"QRN");
       double p1 = f->GetParameter(1), p2 = f->GetParameter(2);
       if( p2 < 0. ) xpeak = -p1/(2.*p2);
     }
-    else                                                 //Landau
+    else if( mode == 1 )                                 // Landau
     {
       f = new TF1(Form("f_%s",h->GetName()),"[0]*TMath::Landau(x,[1],[2])",xlo,xhi);
       f -> SetParameters( ymax, xpk, 0.15*xpk );
@@ -549,16 +560,52 @@ int main(int argc, char** argv)
       h -> Fit(f,"QRN");
       xpeak = f -> GetMaximumX(xlo,xhi);
     }
+    else if( mode == 2 )                                 // gaussiana
+    {
+      f = new TF1(Form("f_%s",h->GetName()),"gaus",xlo,xhi);
+      f -> SetParameters( ymax, xpk, 0.25*(xhi-xlo) );
+      f -> SetParLimits(1, xlo, xhi);
+      h -> Fit(f,"QRN");
+      xpeak = f -> GetParameter(1);
+    }
+    else                                                 // langaus
+    {
+      // pre-fit di Landau per avere semi ragionevoli sui 4 parametri
+      TF1 fseed(Form("fseed_%s",h->GetName()),"[0]*TMath::Landau(x,[1],[2])",xlo,xhi);
+      fseed.SetParameters( ymax, xpk, 0.10*xpk );
+      fseed.SetParLimits(1, xlo, xhi);
+      fseed.SetParLimits(2, 0., 0.5*xpk);
+      h -> Fit(&fseed,"QRN");
+
+      double wLan = fabs(fseed.GetParameter(2));
+      double mpLan = fseed.GetParameter(1);
+      if( wLan <= 0. || wLan > 0.5*xpk ) wLan  = 0.08*xpk;
+      if( mpLan < xlo || mpLan > xhi )   mpLan = xpk;
+
+      double area = h->Integral(blo,bhi) * h->GetBinWidth(1);
+      if( area <= 0. ) area = ymax*(xhi-xlo);
+
+      f = new TF1(Form("f_%s",h->GetName()),langaufun,xlo,xhi,4);
+      f -> SetParNames("Width","MP","Area","GSigma");
+      f -> SetParameters( wLan, mpLan, area, 0.05*xpk );
+      f -> SetParLimits(0, 0.01*xpk, 0.50*xpk);
+      f -> SetParLimits(1, xlo, xhi);
+      f -> SetParLimits(2, 0.1*area, 10.*area);
+      f -> SetParLimits(3, 0.005*xpk, 0.30*xpk);
+      h -> Fit(f,"QRN");
+      xpeak = f -> GetMaximumX(xlo,xhi);
+    }
 
     bool ok = ( xpeak > xlo && xpeak < xhi );
     if( !ok ) xpeak = xpk;                               // ripiego sul bin massimo
 
-    /*std::cout << "  [FIT] " << h->GetName()
-	      << (mode==0 ? "  [pol2]  " : "  [landau]")
-	      << "   binMax@" << xpk
-	      << "   range [" << xlo << ", " << xhi << "]"
-	      << "   ->  " << xpeak
-	      << (ok ? "" : "   (ripiego sul bin)") << std::endl;*/    //diagnostic test of fit 
+    const char* modeName[4] = {"pol2   ","landau ","gaus   ","langaus"};
+    std::cout << "  [FIT] " << h->GetName()
+              << "  [" << modeName[mode>=0 && mode<=3 ? mode : 0] << "]"
+              << "   binMax@" << xpk
+              << "   range [" << xlo << ", " << xhi << "]"
+              << "   ->  " << xpeak
+              << (ok ? "" : "   (ripiego sul bin)") << std::endl;
 
     f -> SetLineColor(color);
     f -> SetLineStyle(2);
@@ -655,11 +702,11 @@ int main(int argc, char** argv)
       	  legXT -> Draw("same");
           
           //fit print
-	        double pkMIP   = fitPeak(hXT[1], kBlue,      0, 0.60, 0.60);   //parabola, little range
-	        double pkPrev  = fitPeak(hXT[2], kRed,       1, 0.40, 0.10);   // Landau, asimmetric range
-	        double pkNext  = fitPeak(hXT[3], kGreen+2,   1, 0.40, 0.10);
-          double pkPrev2 = fitPeak(hXT[4], kMagenta+1, 1, 0.40, 0.10);
-          double pkNext2 = fitPeak(hXT[5], kOrange+7,  1, 0.40, 0.10);
+          double pkMIP   = fitPeak(hXT[1], kBlue,      mipFitMode, true );
+          double pkPrev  = fitPeak(hXT[2], kRed,       xtFitMode,  false);
+          double pkNext  = fitPeak(hXT[3], kGreen+2,   xtFitMode,  false);
+          double pkPrev2 = fitPeak(hXT[4], kMagenta+1, xtFitMode,  false);
+          double pkNext2 = fitPeak(hXT[5], kOrange+7,  xtFitMode,  false);
       
           if( pkMIP > 0 ){
 	        xtPeaks << "  " << label;
