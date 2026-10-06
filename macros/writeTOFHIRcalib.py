@@ -1,3 +1,19 @@
+
+#for running the script:
+
+#ssh tzini@lxplus.cern.ch
+#cd ~/private/tzini/Lab5015Analysis
+#source /cvmfs/sft.cern.ch/lcg/views/LCG_106/x86_64-el9-gcc13-opt/setup.sh
+#unset DISPLAY
+
+#python3 macros/writeTOFHIRcalib.py -i generalLabel -sm DUMMY --minEnergy tzini_MIP --fitCheck
+
+
+
+
+
+
+
 #!/usr/bin/env python3
 from utils import *
 ROOT.gStyle.SetOptStat(0)
@@ -6,7 +22,8 @@ ROOT.gErrorIgnoreLevel = ROOT.kWarning
 
 # -------------------------------------------------------
 # YOUR PATHS
-eos_path = "/afs/cern.ch/user/t/tzini/private/tzini/Lab5015Analysis"
+eos_path    = "/afs/cern.ch/user/t/tzini/private/tzini/Lab5015Analysis"
+eos_LO_path = "/eos/cms/store/group/dpg_mtd/comm_mtd/TB/MTDTB_H8_Sep2025/SMs_QAQC/LO_calibrations"
 outdir_base = "/eos/user/t/tzini/TestBeamAnalysis/plot/energy_intercalibration/"
 # ------------------------------------------------------- 
 
@@ -49,9 +66,9 @@ if args.fitCheck:
 
 # -- csv files
 if args.GainPDEcor:
-    LO_csv = f"{eos_path}/plots/module_{sensor_module_id}_Vov{args.ov:.2f}_LO_calibration_factors.csv"
+    LO_csv = f"{eos_LO_path}/module_{sensor_module_id}_Vov{args.ov:.2f}_LO_calibration_factors.csv"
 else:
-    LO_csv = f"{eos_path}/plots/module_{sensor_module_id}_LO_calibration_factors.csv"
+    LO_csv = f"{eos_LO_path}/module_{sensor_module_id}_LO_calibration_factors.csv"
 TOFHIR_csv = f"{outdir}/TOFHIR_calibration_factors.csv"
 TOFHIR_LO_csv = f"{outdir}/TOFHIR_LO_calibration_factors.csv"
 # -- min energy values for the fit range 
@@ -120,7 +137,7 @@ for key,h in h_energy.items():
     if "L-R" == side:
         continue
     h_clone = h.Clone()
-    f_landau, result = fit_landau_langaus(h_clone, min_energy_dict[(bar,vov)], 940, landau_only=True)
+    f_landau, result = fit_landau_langaus(h_clone, min_energy_dict[(bar,vov)], 850, landau_only=True)
     if result is None:
         print(f"[WARNING] Fit failed for {key}")
         failed_keys.append(key)
@@ -209,6 +226,7 @@ for key, val in calib_tofhir_only.items():
         calib_tofhir_lo[key] = 1.0
         continue
     calib_tofhir_lo[key] = val * calib_LO[(bar, side)]
+    print(calib_tofhir_lo[key], val, calib_LO[(bar, side)])
 
 # -- save to csv
 with open(TOFHIR_LO_csv, "w", newline="") as f:
@@ -305,7 +323,7 @@ if args.drawMPVvsBar:
         if side == "L-R":
             continue
         h_clone = h.Clone()
-        _,result = fit_landau_langaus(h_clone, min_energy_dict[(bar,vov)], 940, landau_only=True)
+        _,result = fit_landau_langaus(h_clone, min_energy_dict[(bar,vov)], 850, landau_only=True)
         mpv_raw[key] = result["landau_mpv"]
         mpv_tof[key] = mpv_raw[key]*calib_tofhir_only[key]
         mpv_lo[key] = mpv_raw[key]*calib_LO[(bar,side)]

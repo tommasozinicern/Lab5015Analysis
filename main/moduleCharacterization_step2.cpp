@@ -494,23 +494,30 @@ int main(int argc, char** argv)
     
 
 
-  //  CROSSTALK PLOTS
+//  CROSSTALK PLOTS
   {
     const char* XTsel[6] = {"all","MIP","XTprev","XTnext","XTprev2","XTnext2"};
     const char* XTleg[6] = {"all events","MIP in the bar",
 			    "crosstalk from bar-1","crosstalk from bar+1",
 			    "crosstalk from bar-2","crosstalk from bar+2"};
     int         XTcol[6] = {kBlack, kBlue, kRed, kGreen+2, kMagenta+1, kOrange+7};
-    
-    std::ofstream xtPeaks(Form("%s/crosstalk/crosstalkPeaks.txt",plotDir.c_str()));
-    xtPeaks << "# k = crosstalk peak / MIP peak (same channel)" << std::endl;
-    xtPeaks << "# MIP peak: vertex of a parabola in the region above 60% of the maximum" << std::endl;
-    xtPeaks << "# crosstalk peaks: maximum of a Landau distribution fitted around the peak" << std::endl;
-    
+
+
+    std::ofstream xtPeaks(Form("%s/crosstalk/crosstalkPeaks_NearBars.txt",plotDir.c_str()));
+    xtPeaks << "# k = crosstalk peak (this bar) / MIP peak of the SOURCE bar, same side" << std::endl;
+    xtPeaks << "# requires intercalibrated energies: the two peaks come from different channels" << std::endl;
+    xtPeaks << "# MIP peak and crosstalk peaks: see the fit modes in the <Crosstalk> cfg block" << std::endl;
+
+    std::ofstream xtPeaksSelf(Form("%s/crosstalk/crosstalkPeaks_SameBars.txt",plotDir.c_str()));
+    xtPeaksSelf << "# k = crosstalk peak / MIP peak (same channel)" << std::endl;
+    xtPeaksSelf << "# intercalibration-free by construction: any per-channel factor cancels" << std::endl;
+    xtPeaksSelf << "# MIP peak and crosstalk peaks: see the fit modes in the <Crosstalk> cfg block" << std::endl;
+
   // mode: 0 = parabola | 1 = Landau | 2 = gaussiana | 3 = langaus
   // isMIP: true  -> usa mipFitFrac / mipFitFracHi
   //        false -> usa xtFitFracLo / xtFitFracHi
-  auto fitPeak = [&](TH1F* h, int color, int mode, bool isMIP) -> double
+  // draw:  false -> fitta in silenzio, senza disegnare (serve al primo passaggio)
+  auto fitPeak = [&](TH1F* h, int color, int mode, bool isMIP, bool draw = true) -> double
   {
     if( !h || h->GetEntries() < 200 ) return -1.;
 
@@ -570,14 +577,13 @@ int main(int argc, char** argv)
     }
     else                                                 // langaus
     {
-      // pre-fit di Landau per avere semi ragionevoli sui 4 parametri
       TF1 fseed(Form("fseed_%s",h->GetName()),"[0]*TMath::Landau(x,[1],[2])",xlo,xhi);
       fseed.SetParameters( ymax, xpk, 0.10*xpk );
       fseed.SetParLimits(1, xlo, xhi);
       fseed.SetParLimits(2, 0., 0.5*xpk);
       h -> Fit(&fseed,"QRN");
 
-      double wLan = fabs(fseed.GetParameter(2));
+      double wLan  = fabs(fseed.GetParameter(2));
       double mpLan = fseed.GetParameter(1);
       if( wLan <= 0. || wLan > 0.5*xpk ) wLan  = 0.08*xpk;
       if( mpLan < xlo || mpLan > xhi )   mpLan = xpk;
@@ -599,18 +605,21 @@ int main(int argc, char** argv)
     bool ok = ( xpeak > xlo && xpeak < xhi );
     if( !ok ) xpeak = xpk;                               // ripiego sul bin massimo
 
-    const char* modeName[4] = {"pol2   ","landau ","gaus   ","langaus"};
-    std::cout << "  [FIT] " << h->GetName()
-              << "  [" << modeName[mode>=0 && mode<=3 ? mode : 0] << "]"
-              << "   binMax@" << xpk
-              << "   range [" << xlo << ", " << xhi << "]"
-              << "   ->  " << xpeak
-              << (ok ? "" : "   (ripiego sul bin)") << std::endl;
+    if( draw )
+    {
+      const char* modeName[4] = {"pol2   ","landau ","gaus   ","langaus"};
+      std::cout << "  [FIT] " << h->GetName()
+                << "  [" << modeName[mode>=0 && mode<=3 ? mode : 0] << "]"
+                << "   binMax@" << xpk
+                << "   range [" << xlo << ", " << xhi << "]"
+                << "   ->  " << xpeak
+                << (ok ? "" : "   (ripiego sul bin)") << std::endl;
 
-    f -> SetLineColor(color);
-    f -> SetLineStyle(2);
-    f -> SetLineWidth(2);
-    f -> Draw("same");
+      f -> SetLineColor(color);
+      f -> SetLineStyle(2);
+      f -> SetLineWidth(2);
+      f -> Draw("same");
+    }
 
     return xpeak;
   };
@@ -619,8 +628,8 @@ int main(int argc, char** argv)
     {
       float Vov = map_Vovs[stepLabel];
       float vth = map_ths[stepLabel];
-      
-      
+
+
       // Nhit histo drawing
       {
       	TH1F* hNhit    = (TH1F*)( inFile->Get(Form("h1_Nhit_%s",   stepLabel.c_str())) );
@@ -633,11 +642,11 @@ int main(int argc, char** argv)
     	  hNhit    -> SetTitle(";n. barre per evento;eventi");
     	  hNhit    -> SetLineColor(kBlack);  hNhit    -> SetLineWidth(2);
     	  hNhitMIP -> SetLineColor(kRed);    hNhitMIP -> SetLineWidth(2);
-        
+
     	  double ymax = std::max( hNhit->GetMaximum(), hNhitMIP->GetMaximum() );
-    	  hNhit -> SetMaximum( 3.*ymax ); 
-    	  hNhit -> SetMinimum( 0.5 );       
-        
+    	  hNhit -> SetMaximum( 3.*ymax );
+    	  hNhit -> SetMinimum( 0.5 );
+
     	  hNhit    -> Draw("HIST");
         hNhitMIP -> Draw("HIST SAME");
 
@@ -647,32 +656,63 @@ int main(int argc, char** argv)
 	      legN -> AddEntry(hNhit,    Form("active bars"), "l");
 	      legN -> AddEntry(hNhitMIP, Form("bars with MIP"), "l");
 	      legN -> Draw("same");
-       
+
 	      latex = new TLatex(0.16,0.83,Form("V_{OV} = %.2f V, th. = %d DAC",Vov,int(vth)));
 	      latex -> SetNDC();  latex -> SetTextFont(42);
 	      latex -> SetTextSize(0.04);  latex -> SetTextColor(kRed);
 	      latex -> Draw("same");
-       
+
 	      outFile -> cd();
 	      hNhit -> Write();  hNhitMIP -> Write();
-       
+
 	      c -> Print(Form("%s/crosstalk/c_Nhit_%s.png",plotDir.c_str(),stepLabel.c_str()));
 	      c -> Print(Form("%s/crosstalk/c_Nhit_%s.pdf",plotDir.c_str(),stepLabel.c_str()));
 	      delete c;  delete latex;
 	      }
       }
-      
 
+
+      // ---------------------------------------------------------------------
+      // PRIMO PASSAGGIO: picco MIP di ogni barra e lato, senza disegnare.
+      // Serve perche' il rapporto della barra i usa il picco della barra i+-1,
+      // che nel ciclo di disegno non e' ancora stato fittato.
+      // ---------------------------------------------------------------------
+      std::map<std::string,double> mipPeak;   // chiave: "bar%02d%s"
+
+      for(int jBar = 0; jBar < 16; ++jBar)
+      {
+        if( std::find(barList.begin(),barList.end(),jBar) == barList.end() ) continue;
+        for(auto LRLabel : LRLabels)
+        {
+          TH1F* hM = (TH1F*)( inFile->Get(Form("h1_XTenergy_MIP_bar%02d%s_%s",
+                                               jBar,LRLabel.c_str(),stepLabel.c_str())) );
+          if( !hM ) continue;
+          double pk = fitPeak(hM, kBlue, mipFitMode, true, false);
+          if( pk > 0. ) mipPeak[Form("bar%02d%s",jBar,LRLabel.c_str())] = pk;
+        }
+      }
+
+      // piccola funzione di comodo: picco MIP della barra sorgente, o -1
+      auto mipOf = [&](int jBar, const std::string& LRLabel) -> double
+      {
+        if( jBar < 0 || jBar > 15 ) return -1.;
+        auto it = mipPeak.find(Form("bar%02d%s",jBar,LRLabel.c_str()));
+        return ( it == mipPeak.end() ) ? -1. : it->second;
+      };
+
+
+      // ---------------------------------------------------------------------
+      // SECONDO PASSAGGIO: disegno e rapporti
+      // ---------------------------------------------------------------------
       for(int iBar = 0; iBar < 16; ++iBar)
       {
       	bool barFound = std::find(barList.begin(), barList.end(), iBar) != barList.end();
       	if( !barFound ) continue;
-      
+
       	for(auto LRLabel : LRLabels)
 	      {
 	        std::string label(Form("bar%02d%s_%s",iBar,LRLabel.c_str(),stepLabel.c_str()));
 
-	        // take the 4 histograms and continue if one of them miss
       	  TH1F* hXT[6];
       	  bool allFound = true;
       	  for(int iSel = 0; iSel < 6; ++iSel){
@@ -680,16 +720,16 @@ int main(int argc, char** argv)
       	    if( !hXT[iSel] ) allFound = false;
       	  }
       	  if( !allFound ) continue;
-      
+
       	  c = new TCanvas(Form("c_crosstalk_%s",label.c_str()),Form("c_crosstalk_%s",label.c_str()));
       	  gPad -> SetLogy();
-      
+
           TLegend* legXT = new TLegend(0.50,0.55,0.89,0.88);
       	  legXT -> SetBorderSize(0);
       	  legXT -> SetFillStyle(0);
       	  legXT -> SetTextFont(42);
       	  legXT -> SetTextSize(0.030);
-      
+
       	  for(int iSel = 0; iSel < 6; ++iSel)
       	  {
       	    hXT[iSel] -> SetTitle(";energy [a.u.];entries");
@@ -700,23 +740,38 @@ int main(int argc, char** argv)
       	    legXT -> AddEntry(hXT[iSel], Form("%s  (%.0f)",XTleg[iSel],hXT[iSel]->GetEntries()), "l");
       	  }
       	  legXT -> Draw("same");
-          
+
           //fit print
           double pkMIP   = fitPeak(hXT[1], kBlue,      mipFitMode, true );
           double pkPrev  = fitPeak(hXT[2], kRed,       xtFitMode,  false);
           double pkNext  = fitPeak(hXT[3], kGreen+2,   xtFitMode,  false);
           double pkPrev2 = fitPeak(hXT[4], kMagenta+1, xtFitMode,  false);
           double pkNext2 = fitPeak(hXT[5], kOrange+7,  xtFitMode,  false);
-      
+
+          // -- denominatori: picco MIP della barra sorgente, stesso lato
+          double mipPrev  = mipOf(iBar-1, LRLabel);
+          double mipNext  = mipOf(iBar+1, LRLabel);
+          double mipPrev2 = mipOf(iBar-2, LRLabel);
+          double mipNext2 = mipOf(iBar+2, LRLabel);
+
+          // -- file nuovo: normalizzato sulla barra sorgente
+          xtPeaks << "  " << label;
+          if( pkPrev  > 0 && mipPrev  > 0 ) xtPeaks << "   XTprev = "  << 100.*pkPrev /mipPrev  << " %"; else xtPeaks << "   XTprev = n/a";
+          if( pkNext  > 0 && mipNext  > 0 ) xtPeaks << "   XTnext = "  << 100.*pkNext /mipNext  << " %"; else xtPeaks << "   XTnext = n/a";
+          if( pkPrev2 > 0 && mipPrev2 > 0 ) xtPeaks << "   XTprev2 = " << 100.*pkPrev2/mipPrev2 << " %"; else xtPeaks << "   XTprev2 = n/a";
+          if( pkNext2 > 0 && mipNext2 > 0 ) xtPeaks << "   XTnext2 = " << 100.*pkNext2/mipNext2 << " %"; else xtPeaks << "   XTnext2 = n/a";
+          xtPeaks << std::endl;
+
+          // -- file vecchio: normalizzato sullo stesso canale, per confronto
           if( pkMIP > 0 ){
-	        xtPeaks << "  " << label;
-	        if( pkPrev  > 0 ) xtPeaks << "   XTprev = "  << 100.*pkPrev /pkMIP << " %"; else xtPeaks << "   XTprev = n/a";
-	        if( pkNext  > 0 ) xtPeaks << "   XTnext = "  << 100.*pkNext /pkMIP << " %"; else xtPeaks << "   XTnext = n/a";
-	        if( pkPrev2 > 0 ) xtPeaks << "   XTprev2 = " << 100.*pkPrev2/pkMIP << " %"; else xtPeaks << "   XTprev2 = n/a";
-	        if( pkNext2 > 0 ) xtPeaks << "   XTnext2 = " << 100.*pkNext2/pkMIP << " %"; else xtPeaks << "   XTnext2 = n/a";
-	        xtPeaks << std::endl;
+	        xtPeaksSelf << "  " << label;
+	        if( pkPrev  > 0 ) xtPeaksSelf << "   XTprev = "  << 100.*pkPrev /pkMIP << " %"; else xtPeaksSelf << "   XTprev = n/a";
+	        if( pkNext  > 0 ) xtPeaksSelf << "   XTnext = "  << 100.*pkNext /pkMIP << " %"; else xtPeaksSelf << "   XTnext = n/a";
+	        if( pkPrev2 > 0 ) xtPeaksSelf << "   XTprev2 = " << 100.*pkPrev2/pkMIP << " %"; else xtPeaksSelf << "   XTprev2 = n/a";
+	        if( pkNext2 > 0 ) xtPeaksSelf << "   XTnext2 = " << 100.*pkNext2/pkMIP << " %"; else xtPeaksSelf << "   XTnext2 = n/a";
+	        xtPeaksSelf << std::endl;
 	        }
-      
+
       	  if( LRLabel == "L-R" )
       	    latex = new TLatex(0.16,0.83,Form("#splitline{bar %02d}{V_{OV} = %.2f V, th. = %d DAC}",iBar,Vov,int(vth)));
       	  else
@@ -726,23 +781,24 @@ int main(int argc, char** argv)
       	  latex -> SetTextSize(0.04);
       	  latex -> SetTextColor(kRed);
       	  latex -> Draw("same");
-      
+
       	  c -> Print(Form("%s/crosstalk/c_crosstalk__%s.png",plotDir.c_str(),label.c_str()));
       	  c -> Print(Form("%s/crosstalk/c_crosstalk__%s.pdf",plotDir.c_str(),label.c_str()));
-      
+
       	  // save histograms in step2 output files
       	  outFile -> cd();
       	  for(int iSel = 0; iSel < 6; ++iSel) hXT[iSel] -> Write();
-      
+
       	  delete c;
           delete latex;
         }
       }
     }
     xtPeaks.close();
+    xtPeaksSelf.close();
   }
-    
-    
+  
+  
   // CROSSTALK FRACTIONS
   {
     // energy integration limits: the entire histogram
